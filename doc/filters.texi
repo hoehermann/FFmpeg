@@ -7760,6 +7760,91 @@ ffmpeg -f lavfi -i color=c=black:s=1280x720 -i video.mp4 -shortest -filter_compl
 @end example
 @end itemize
 
+@section chromarange
+YUV colorspace color keying with UV chroma ranges.
+
+Working on on-subsampled formats such as yuv444p is recommended.
+Input format is derived by output format. 
+Output format is determined automatically.
+Supports 8 bit formats only.
+
+The filter accepts the following options:
+
+@table @option
+@item ylower
+@item ulower
+@item vlower
+@item yupper
+@item uupper
+@item vupper
+
+The lower and upper bounds for the color (U,V) and luminosity (Y) range 
+to be replaced with transparency. Ranges are 0 to 255.
+
+@item minsat
+
+A lower bound for the saturation given as the squared euclidean distance 
+from neutral gray with "neutral gray" being Y=U=128.
+
+@example
++-------------------------------------------------------------+
+|                                                             |
+|                                                             |
+|                                                             |
+|                                                             |
+|     entire UV colorspace                                    |
+|                                                             |
+|                                                             |
+|                                                             |
+|                                                             |
+|                              minsat                         |
+|                                     +--------------------+  |
+|               neutral gray  * <---> |        vupper      |  |
+|                                    /                     |  |
+|                                   /                      |  |
+|                              +---´                       |  |
+|                              |                           |  |
+|                              |                           |  |
+|                              |ulower               uupper|  |
+|                              |                           |  |
+|                              |                           |  |
+|                              |                           |  |
+|                              |           vlower          |  |
+|                              +---------------------------+  |
+|                                                             |
++-------------------------------------------------------------+
+@end example
+
+@subsection Examples
+
+@itemize
+@item
+Make every blue pixel in the input image transparent:
+@example
+ffmpeg -i input.png -vf chromarange out.png
+@end example
+
+@itemize
+@item
+Make every bright blue pixel in the input image transparent:
+@example
+ffmpeg -i input.png -vf chromarange=ylower=100 out.png
+@end example
+
+@item
+Overlay a bluescreen-video on top of a static black background.
+@example
+ffmpeg -f lavfi -i color=c=black:s=1280x720 -i video.mp4 -shortest -filter_complex "[1:0]chromarange[cr];[0:v][cr]overlay[out]" -map "[out]" output.mkv
+@end example
+@end itemize
+
+@item
+Overlay a bluescreen-video on top of a static black background. Blur alpha channel for smoother keying.
+@example
+ffmpeg -f lavfi -i color=c=black:s=1280x720 -i video.mp4 -shortest -filter_complex "[1:0]chromarange[cr];[cr]format=yuva444p[fmt];[fmt]alphaextract[alpha];[alpha]avgblur[ablur];[1:0][ablur]alphamerge[amerged];[0:v][amerged]overlay[out]" -map "[out]" output.mkv
+@end example
+@end itemize
+
 @section chromanr
 Reduce chrominance noise.
 

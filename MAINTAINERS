@@ -336,6 +336,7 @@ Filters:
   vf_blend.c                            Paul B Mahol
   vf_bwdif                              Thomas Mundt (CC <thomas.mundt@hr.de>)
   vf_chromakey.c                        Timo Rothenpieler
+  vf_chromarange.c                        Hermann Höhne (CC <hermann@hehoe.de>)
   vf_colorchannelmixer.c                Paul B Mahol
   vf_colorconstancy.c                   Mina Sami    (CC <minas.gorgy@gmail.com>)
   vf_colorbalance.c                     Paul B Mahol
