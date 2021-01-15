@@ -30,13 +30,14 @@ typedef struct ChromarangeContext {
     const AVClass *class; // av_log wants the first field of the struct to be the pointer to the class
 
     // parameters given by user
-    int y_lower;
-    int u_lower;
-    int v_lower;
-    int y_upper;
-    int u_upper;
-    int v_upper;
-    int squaredsat_lower;
+    int min_hue;
+    int max_hue;
+    int hue_blend;
+    int min_luminance;
+    int max_luminance;
+    int luminance_blend;
+    int min_saturation;
+    int saturation_blend;
     //enum AVPixelFormat pix_fmt;
 
     // parameters defined by output format
@@ -57,27 +58,80 @@ static int do_chromarange_slice(AVFilterContext *avctx, void *arg, int jobnr, in
 
     ChromarangeContext *ctx = avctx->priv;
 
+    float min_hue = ((ctx->min_hue + 19)%360 / 180.0 - 1.0) * 3.1415;
+    float max_hue = ((ctx->max_hue + 19)%360 / 180.0 - 1.0) * 3.1415;
+    float hue_blend = ctx->hue_blend / 180.0 * 3.1415;
+    int min_luminance = ctx->min_luminance;
+    int max_luminance = ctx->max_luminance;
+    int luminance_blend = ctx->luminance_blend;
+    float min_saturation = ctx->min_saturation / 1000.0;
+    float saturation_blend = ctx->saturation_blend / 1000.0;
+
     for (int row = slice_start; row < slice_end; ++row) {
         for (int col = 0; col < frame->width; ++col) {
 
             int ucol = col >> ctx->hsub_log2;
             int vrow = row >> ctx->vsub_log2;
 
-            int y = frame->data[0][frame->linesize[0] * row + col];
-            int u = frame->data[1][frame->linesize[1] * vrow + ucol];
-            int v = frame->data[2][frame->linesize[2] * vrow + ucol];
+            int luminance = frame->data[0][frame->linesize[0] * row + col];
+            float u = frame->data[1][frame->linesize[1] * vrow + ucol] / 255.0 - 0.5;
+            float v = frame->data[2][frame->linesize[2] * vrow + ucol] / 255.0 - 0.5;
 
-            int ud = u-128;
-            int vd = v-128;
-            int sqaredsat = ud*ud+vd*vd;
+            float sat = sqrt(u*u+v*v);
+            
+            float hue = atan2f(u,-v);
 
-            int transparent =
-                u >= ctx->u_lower && u <= ctx->u_upper &&
-                v >= ctx->v_lower && v <= ctx->v_upper &&
-                y >= ctx->y_lower && y <= ctx->y_upper &&
-                sqaredsat >= ctx->squaredsat_lower;
-            int alpha = !transparent * 255;
-            frame->data[3][frame->linesize[3] * row + col] = alpha;
+            float alpha = 1.0; // foreground is default
+            if (
+                min_hue < hue && 
+                max_hue > hue && 
+                min_saturation < sat && 
+                min_luminance < luminance && 
+                max_luminance > luminance
+            ) {
+                // all criteria match – this is background
+                alpha = 0.0;
+            }
+            if (
+                ctx->hue_blend > 0 &&
+                min_saturation < sat && 
+                min_luminance < luminance && 
+                max_luminance > luminance
+            ) {
+                // saturation and luminance match – blend hue
+                if (min_hue > hue && min_hue - hue_blend < hue) {
+                    alpha *= (min_hue - hue) / hue_blend;
+                }
+                if (max_hue < hue && max_hue + hue_blend > hue) {
+                    alpha *= (hue - max_hue) / hue_blend;
+                }
+            }
+            if (
+                ctx->saturation_blend > 0 &&
+                min_hue < hue && 
+                max_hue > hue && 
+                min_luminance < luminance && 
+                max_luminance > luminance
+            ) {
+                // hue and luminance match – blend saturation
+                if (min_saturation > sat && min_saturation - saturation_blend < sat)
+                alpha *= (min_saturation - sat) / saturation_blend;
+            }
+            if (
+                ctx->luminance_blend > 0 &&
+                min_hue < hue && 
+                max_hue > hue && 
+                min_saturation < sat
+            ) {
+                // hue and saturation match – blend luminance
+                if (min_luminance > luminance && min_luminance - luminance_blend < luminance) {
+                    alpha *= (float)(min_luminance - luminance) / luminance_blend;
+                }
+                if (max_luminance < luminance && max_luminance + luminance_blend > luminance) {
+                    alpha *= (float)(luminance - max_luminance) / luminance_blend;
+                }
+            }
+            frame->data[3][frame->linesize[3] * row + col] = alpha * 255;
         }
     }
 
@@ -141,7 +195,7 @@ static av_cold int config_input(AVFilterLink *inlink)
     ctx->vsub_log2 = desc->log2_chroma_h;
 
     if (ctx->hsub_log2 > 0 || ctx->vsub_log2 > 0) {
-        av_log(ctx, AV_LOG_WARNING, "Selected output format leads to sub-sampled chroma on input. Try to force yuv444p for better quality.\n");
+        av_log(ctx, AV_LOG_WARNING, "Chroma sub-sampling detected. Try to force yuv444p for better quality.\n");
     }
     return 0;
 }
@@ -182,13 +236,14 @@ static const AVFilterPad chromarange_outputs[] = {
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption chromarange_options[] = {
-    { "ylower", "luminance Y lower bound", OFFSET(y_lower), AV_OPT_TYPE_INT, { .i64 = 64 }, 0, 255, FLAGS },
-    { "ulower", "chroma U lower bound", OFFSET(u_lower), AV_OPT_TYPE_INT, { .i64 = 128 }, 0, 255, FLAGS },
-    { "vlower", "chroma V lower bound", OFFSET(v_lower), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 255, FLAGS },
-    { "yupper", "luminance Y upper bound", OFFSET(y_upper), AV_OPT_TYPE_INT, { .i64 = 255 }, 0, 255, FLAGS },
-    { "uupper", "chroma U upper bound", OFFSET(u_upper), AV_OPT_TYPE_INT, { .i64 = 255 }, 0, 255, FLAGS },
-    { "vupper", "chroma V upper bound", OFFSET(v_upper), AV_OPT_TYPE_INT, { .i64 = 127 }, 0, 255, FLAGS },
-    { "minsat", "minimum saturation as suqared euclidean UV distance from grey (128,128)", OFFSET(squaredsat_lower), AV_OPT_TYPE_INT, { .i64 = 265 }, 0, 128*128, FLAGS },
+    { "min_hue", "min_hue", OFFSET(min_hue), AV_OPT_TYPE_INT, { .i64 = 110 }, 0, 360, FLAGS },
+    { "max_hue", "max_hue", OFFSET(max_hue), AV_OPT_TYPE_INT, { .i64 = 140 }, 0, 360, FLAGS },
+    { "hue_blend", "hue_blend", OFFSET(hue_blend), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 360, FLAGS },
+    { "min_luminance", "min_luminance", OFFSET(min_luminance), AV_OPT_TYPE_INT, { .i64 = 30 }, 0, 255, FLAGS },
+    { "max_luminance", "max_luminance", OFFSET(max_luminance), AV_OPT_TYPE_INT, { .i64 = 120 }, 0, 255, FLAGS },
+    { "luminance_blend", "luminance_blend", OFFSET(luminance_blend), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 255, FLAGS },
+    { "min_saturation", "min_saturation", OFFSET(min_saturation), AV_OPT_TYPE_INT, { .i64 = 50 }, 0, 1000, FLAGS },
+    { "saturation_blend", "saturation_blend", OFFSET(saturation_blend), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1000, FLAGS },
     //{"pixel_format", "pixel format", OFFSET(pix_fmt), AV_OPT_TYPE_PIXEL_FMT, {.i64=AV_PIX_FMT_NONE}, -1, INT_MAX, 0 },
     { NULL }
 };
