@@ -37,6 +37,7 @@ typedef struct ChromarangeContext {
     int max_luminance;
     int luminance_blend;
     int min_saturation;
+    int max_saturation;
     int saturation_blend;
     //enum AVPixelFormat pix_fmt;
 
@@ -58,13 +59,14 @@ static int do_chromarange_slice(AVFilterContext *avctx, void *arg, int jobnr, in
 
     ChromarangeContext *ctx = avctx->priv;
 
-    float min_hue = ((ctx->min_hue + 19)%360 / 180.0 - 1.0) * 3.1415;
-    float max_hue = ((ctx->max_hue + 19)%360 / 180.0 - 1.0) * 3.1415;
+    float min_hue = ((ctx->min_hue + 19)/*%360*/ / 180.0 - 1.0) * 3.1415;
+    float max_hue = ((ctx->max_hue + 19)/*%360*/ / 180.0 - 1.0) * 3.1415;
     float hue_blend = ctx->hue_blend / 180.0 * 3.1415;
     int min_luminance = ctx->min_luminance;
     int max_luminance = ctx->max_luminance;
     int luminance_blend = ctx->luminance_blend;
     float min_saturation = ctx->min_saturation / 1000.0;
+    float max_saturation = ctx->max_saturation / 1000.0;
     float saturation_blend = ctx->saturation_blend / 1000.0;
 
     for (int row = slice_start; row < slice_end; ++row) {
@@ -83,20 +85,22 @@ static int do_chromarange_slice(AVFilterContext *avctx, void *arg, int jobnr, in
 
             float alpha = 1.0; // foreground is default
             if (
-                min_hue < hue && 
-                max_hue > hue && 
-                min_saturation < sat && 
-                min_luminance < luminance && 
-                max_luminance > luminance
+                min_hue <= hue && 
+                max_hue >= hue && 
+                min_saturation <= sat && 
+                max_saturation >= sat && 
+                min_luminance <= luminance && 
+                max_luminance >= luminance
             ) {
                 // all criteria match – this is background
                 alpha = 0.0;
             }
             if (
                 ctx->hue_blend > 0 &&
-                min_saturation < sat && 
-                min_luminance < luminance && 
-                max_luminance > luminance
+                min_saturation <= sat && 
+                max_saturation >= sat && 
+                min_luminance <= luminance && 
+                max_luminance >= luminance
             ) {
                 // saturation and luminance match – blend hue
                 if (min_hue > hue && min_hue - hue_blend < hue) {
@@ -108,20 +112,22 @@ static int do_chromarange_slice(AVFilterContext *avctx, void *arg, int jobnr, in
             }
             if (
                 ctx->saturation_blend > 0 &&
-                min_hue < hue && 
-                max_hue > hue && 
-                min_luminance < luminance && 
-                max_luminance > luminance
+                min_hue <= hue && 
+                max_hue >= hue && 
+                min_luminance <= luminance && 
+                max_luminance >= luminance
             ) {
                 // hue and luminance match – blend saturation
                 if (min_saturation > sat && min_saturation - saturation_blend < sat)
                 alpha *= (min_saturation - sat) / saturation_blend;
+                // TODO: blend max_saturation
             }
             if (
                 ctx->luminance_blend > 0 &&
-                min_hue < hue && 
-                max_hue > hue && 
-                min_saturation < sat
+                min_hue <= hue && 
+                max_hue >= hue && 
+                min_saturation <= sat && 
+                max_saturation >= sat
             ) {
                 // hue and saturation match – blend luminance
                 if (min_luminance > luminance && min_luminance - luminance_blend < luminance) {
@@ -236,14 +242,15 @@ static const AVFilterPad chromarange_outputs[] = {
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption chromarange_options[] = {
-    { "min_hue", "min_hue", OFFSET(min_hue), AV_OPT_TYPE_INT, { .i64 = 110 }, 0, 360, FLAGS },
-    { "max_hue", "max_hue", OFFSET(max_hue), AV_OPT_TYPE_INT, { .i64 = 140 }, 0, 360, FLAGS },
+    { "min_hue", "min_hue", OFFSET(min_hue), AV_OPT_TYPE_INT, { .i64 = 110 }, -19, 341, FLAGS },
+    { "max_hue", "max_hue", OFFSET(max_hue), AV_OPT_TYPE_INT, { .i64 = 140 }, -19, 341, FLAGS },
     { "hue_blend", "hue_blend", OFFSET(hue_blend), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 360, FLAGS },
-    { "min_luminance", "min_luminance", OFFSET(min_luminance), AV_OPT_TYPE_INT, { .i64 = 30 }, 0, 255, FLAGS },
-    { "max_luminance", "max_luminance", OFFSET(max_luminance), AV_OPT_TYPE_INT, { .i64 = 120 }, 0, 255, FLAGS },
+    { "min_luminance", "min_luminance", OFFSET(min_luminance), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 255, FLAGS },
+    { "max_luminance", "max_luminance", OFFSET(max_luminance), AV_OPT_TYPE_INT, { .i64 = 255 }, 0, 255, FLAGS },
     { "luminance_blend", "luminance_blend", OFFSET(luminance_blend), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 255, FLAGS },
-    { "min_saturation", "min_saturation", OFFSET(min_saturation), AV_OPT_TYPE_INT, { .i64 = 50 }, 0, 1000, FLAGS },
-    { "saturation_blend", "saturation_blend", OFFSET(saturation_blend), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1000, FLAGS },
+    { "min_saturation", "min_saturation", OFFSET(min_saturation), AV_OPT_TYPE_INT, { .i64 = 50 }, 0, 708, FLAGS },
+    { "max_saturation", "max_saturation", OFFSET(max_saturation), AV_OPT_TYPE_INT, { .i64 = 708 }, 0, 708, FLAGS },
+    { "saturation_blend", "saturation_blend", OFFSET(saturation_blend), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 708, FLAGS },
     //{"pixel_format", "pixel format", OFFSET(pix_fmt), AV_OPT_TYPE_PIXEL_FMT, {.i64=AV_PIX_FMT_NONE}, -1, INT_MAX, 0 },
     { NULL }
 };
